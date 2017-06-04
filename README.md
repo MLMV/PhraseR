@@ -1,15 +1,15 @@
 # PhraseR
-Text prediction app for Coursera/Johns Hopkins Data Science Capstone
+#### Text prediction app for Coursera/Johns Hopkins Data Science Capstone
 
 This repo has all the files used for the Coursera Johns Hopkins University Data Science Capstone project which has the objective to read in a set of large unstructured text files, train a machine learning model and produce a text prediction app on Shinyapps.io.
 
-Links:
+#### Links:
 - Data download: https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
 - Exploratory analysis: https://rpubs.com/mlmv/swiftkey
 - Presentation: http://rpubs.com/mlmv/phraser
 - Shiny app: https://mlmv.shinyapps.io/phraser/
 
-Files in this repo are organized as follows:
+#### Files in this repo are organized as follows:
 - app folder: all files used to produce the Shiny app, including ui.R, server.R, scripts containing word prediction functions with and without smoothing. This folder can be used standalone and should run the app on any PC (at least on Windows 10 with R version 3.4)
   - files folder: .rds files used to read in n-gram MLE and GT probabilities
   - scripts: word prediction scripts for n-gram MLE and GT probabilities
@@ -21,14 +21,14 @@ Files in this repo are organized as follows:
   - scripts folder: all the R scripts used (see below)
 - report folder: all files used for the mid-course progress report and exploratory analysis.
 
-Language processing and predictive modeling:
+#### Language processing and predictive modeling:
 - Reading, storing, sampling, and cleaning of the data were done with the [tm package](https://cran.r-project.org/web/packages/tm/index.html). 
 - [n-gram](https://en.wikipedia.org/wiki/N-gram) frequency tables up to n=6 and [maximum likelihood estimates](https://en.wikipedia.org/wiki/Maximum_likelihood_estimation) were created using [package text2vec](https://cran.r-project.org/web/packages/text2vec/index.html).
 - [Good-Turing smoothing](https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation) was applied via a custom built function inspired by the work of [Andreas Rubin-Schwarz](https://github.com/andirs) here at Github.
 - Two word prediction functions, with and without smoothing, using a [Katz-backoff model](https://en.wikipedia.org/wiki/Katz%27s_back-off_model) were custom built.
 - Various timer and profiling functions were used to monitor and optimize runtimes of each component.
 
-Scripts: (folder ./project/scripts)
+#### Scripts: (folder ./project/scripts)
 - Wrapper:
   - R_RUNME.R runs the entire set of scripts and process, from collecting file info, loading and processing the data to producing the word predictions, and takes time stamps for each part.
 - Data & text mining:
