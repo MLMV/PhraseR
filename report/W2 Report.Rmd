@@ -1,0 +1,456 @@
+---
+title: "Coursera/Swiftkey Text Mining and Natural Language Analysis"
+author: "MLMV"
+date: "May/June 2017"
+output:
+  html_notebook:
+    code_folding: hide
+    theme: united
+    toc: yes
+  html_document: default
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, echo = FALSE, error = FALSE, message = FALSE, warning = FALSE}
+
+knitr::opts_chunk$set(echo = FALSE, error = FALSE, message = FALSE, warning = FALSE, fig.height = 4, fig.width = 12)
+
+library(tm)
+library(filehash)
+library(SnowballC)
+library(RWeka)
+library(ngram)
+library(ggplot2)
+library(gridExtra)
+library(reshape2)
+library(dplyr)
+
+# list for environment variables
+env = list()
+env$dirFiles <- getwd()
+env$dirData <- paste(env$dirFiles,"../project/data", sep = "")
+
+```
+
+--------------------------------------------------------------------------------
+
+### Introduction
+
+This project serves to analyze a large corpus of text documents to discover the 
+structure in the data and how words are put together. It will perform cleaning 
+and exploratory analysis of the data, then building and sampling from a 
+predictive text model. The final outcome is an application that can take an
+input text and predict the next word.
+
+The data used for exploration and model training can be found at this link:
+https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+
+--------------------------------------------------------------------------------
+
+### Understanding the data
+
+This analysis starts by understanding the data files that need to be worked
+with. For the purpose of the exercise the files have been downloaded and stored
+in a subfolder called "data", sitting inside the same folder as this markdown
+file.
+
+First, we store the names of all the files sitting in the data folder in a list,
+then we run a function over each file that extracts file name, file size(MB),
+the number of lines, the longest line and its length, and the number of words
+for each file. We then print that in a table format and produce some plots.
+
+```{r file_info_1}
+
+setwd(env$dirData)
+
+# store filenames in environment list
+env$fileList <- list.files(recursive = T, pattern = "*.txt")
+
+fileInfo = list()
+fileInfo$info <- lapply(paste(env$fileList, sep = "/"), function(f) {
+      fileSize <- file.info(f)[1] / 1024 / 1024
+      con <- file(f, open = "r")
+      lines <- readLines(con)
+      nchars <- lapply(lines, nchar)
+      maxchars <- which.max(nchars)
+      maxlength <- nchar(lines[maxchars])
+      nwords <- sum(sapply(strsplit(lines, "\\s+"), length))
+      close(con)
+      return(c(
+            f,
+            format(round(fileSize, 2), nsmall = 2),
+            length(lines),
+            maxchars,
+            maxlength,
+            nwords
+      ))
+})
+
+fileInfo$tbl <- data.frame(matrix(unlist(fileInfo$info), nrow = length(fileInfo$info), byrow = T))
+colnames(fileInfo$tbl) <-
+      c("file_name",
+        "size_MB",
+        "num_lines",
+        "longest_line",
+        "max_line_length",
+        "num_words")
+
+setwd(env$dirFiles)
+# write this out to csv, if needed
+# write.table(fileInfo, file = "fileInfo.csv", sep = ",")
+
+```
+
+```{r file_info_2}
+
+fileInfo$tbl$num_lines <- as.numeric(as.character(fileInfo$tbl$num_lines))
+fileInfo$tbl$max_line_length <- as.numeric(as.character(fileInfo$tbl$max_line_length))
+fileInfo$tbl$num_words <- as.numeric(as.character(fileInfo$tbl$num_words))
+fileInfo$tbl$size_MB <- as.numeric(as.character(fileInfo$tbl$size_MB))
+
+fileInfo$plots = list()
+fileInfo$plots[[1]] <- ggplot(data = fileInfo$tbl, aes(x = file_name, y = num_lines/1000)) +
+      geom_bar(stat = "identity", fill = "steelblue4") +
+      labs(y = "Number of lines in thousands", x = "") +
+      coord_flip()
+fileInfo$plots[[2]] <- ggplot(data = fileInfo$tbl, aes(x = file_name, y = max_line_length)) +
+      geom_bar(stat = "identity", fill = "steelblue4") +
+      labs(y = "Maximum line length", x = "") +
+      coord_flip()
+fileInfo$plots[[3]] <- ggplot(data = fileInfo$tbl, aes(x = file_name, y = num_words/1000)) +
+      geom_bar(stat = "identity", fill = "steelblue4") +
+      labs(y = "Number of words in thousands", x = "") +
+      coord_flip()
+fileInfo$plots[[4]] <- ggplot(data = fileInfo$tbl, aes(x = file_name, y = size_MB)) +
+      geom_bar(stat = "identity", fill = "steelblue4") +
+      labs(y = "File size in MB", x = "") +
+      coord_flip()
+grid.arrange(fileInfo$plots[[1]], fileInfo$plots[[2]], fileInfo$plots[[3]], fileInfo$plots[[4]], ncol = 1)
+
+```
+What these show is that the Twitter data has the highest number of lines, but 
+the shortest lines. The news data has the smallest number of words. All three 
+files are over 150MB in size.
+
+--------------------------------------------------------------------------------
+
+### Reading, sampling and tidying up the data
+
+First we read the files into a corpus. The files are large, but since we don't 
+need all of the data for exporation and model training, we suffice with random
+samples consisting of 5% of the lines from each file.
+
+```{r corpus}
+
+swift <- VCorpus(DirSource(env$dirData, mode = "text", encoding = "UTF-8"),
+                readerControl = list(
+                      reader = readPlain,
+                      language = "english",
+                      load = TRUE
+                ))
+
+# Give descriptions that help me to remember which one's which :-)
+swift[[1]]$meta$description <- "Blogs"
+swift[[2]]$meta$description <- "News"
+swift[[3]]$meta$description <- "Twitter"
+
+# Take random samples
+set.seed(1200)
+swift[[1]]$content <- sample(swift[[1]]$content, fileInfo$tbl[1,3]*0.05)
+swift[[2]]$content <- sample(swift[[2]]$content, fileInfo$tbl[2,3]*0.05)
+swift[[3]]$content <- sample(swift[[3]]$content, fileInfo$tbl[3,3]*0.05)
+
+swiftBup <- swift # backup
+swift <- swiftBup # restore
+
+```
+
+In order to get meaningful insights from the data, some cleaning needs to be 
+done, such as removal of punctuations, graphic characters/emoji, white spaces, 
+profanities and other content that does not have our interest. We also convert 
+the data to lower case. For profanity filtering we use a list from Luis von Ahn 
+at Carnegie Mellon University, downloadable at 
+https://www.cs.cmu.edu/~biglou/resources/bad-words.txt. Since the final goal of
+this exercise is to predict words for users typing text, we choose not to
+perform stemming or stop word removal.
+
+```{r clean_data_1, echo=F, eval=F}
+
+# Check lines - this is just for me to check the 'before & after'
+
+      # Remove with tm
+      swift[[1]]$content[[444]] # punctuation
+      swift[[1]]$content[[460]] # brackets, exclamation marks
+      swift[[1]]$content[[463]] # asterisks
+      swift[[1]]$content[[471]] # quotes
+      swift[[3]]$content[[490]] # percent
+      swift[[3]]$content[[513]] # @
+      swift[[3]]$content[[516]] # numbers
+      swift[[3]]$content[[534]] # hashtags
+      
+      # Remove by ASCII conversion
+      swift[[1]]$content[[442]] # hyphens
+      swift[[1]]$content[[478]] # more quotes
+      swift[[3]]$content[[511]] # symbols
+      swift[[1]]$content[[443]] # profanity
+
+```
+
+```{r clean_data_2}
+
+# Convert from UTF-8to ASCII
+swift[[1]]$content <- iconv(swift[[1]]$content, "UTF-8", "ASCII", sub = "byte")
+swift[[2]]$content <- iconv(swift[[2]]$content, "UTF-8", "ASCII", sub = "byte")
+swift[[3]]$content <- iconv(swift[[3]]$content, "UTF-8", "ASCII", sub = "byte")
+
+# Remove punctuation and numbers
+swift <- tm_map(swift, content_transformer(removePunctuation))
+swift <- tm_map(swift, content_transformer(removeNumbers))
+
+# Convert to lower caps (only works after ASCII conversion)
+swift <- tm_map(swift, content_transformer(tolower))
+
+# Remove stopwords - chose to skip
+# swift <- tm_map(swift, removeWords, stopwords("english"))
+
+# Remove profanities
+      # Load profane words list
+      refData = list()
+      con = url("https://www.cs.cmu.edu/~biglou/resources/bad-words.txt")
+      refData$badWords = readLines(con)
+      close(con); rm(con)
+      # Remove them
+      swift <- tm_map(swift, removeWords, refData$badWords)
+
+# Stemming - chose to skip
+# swift <- tm_map(swift, stemDocument)
+
+# Strip excess white spaces
+swift <- tm_map(swift, stripWhitespace)
+
+```
+
+--------------------------------------------------------------------------------
+
+### Exploratory data analysis
+
+To get to know the data better, we can explore the most frequently occurring
+words and other characteristics of the data. To do so, first we build a
+term-document matrix, then extract the most frequently occurring words among the
+three documents and plot them. We also look at data density, and at n-grams.
+
+#### Term-document matrix
+
+A term-document matrix is used to map terms (words) used in a corpus against the
+documents in the corpus. Terms are displayed in rows, columns contain the
+frequencies at which these words occur in each document.
+
+```{r explore}
+
+# Term Document Matrix
+tdm = list()
+tdm$tdm <- TermDocumentMatrix(swift)
+tdm$tdm <- removeSparseTerms(tdm$tdm, 0.25)
+
+# Find most frequent terms
+tdm$mostFreq <- findMostFreqTerms(tdm$tdm, 25)
+
+# Tabulate most frequent terms
+tdm$tblMostFreq <- as.data.frame(tdm$mostFreq)
+tdm$tblMostFreq$Term <- rownames(tdm$tblMostFreq)
+tdm$tblMostFreqMelt <-
+      melt(
+            tdm$tblMostFreq,
+            id = c("Term"),
+            measure.vars = colnames(tdm$tblMostFreq[,1:3])
+      )
+colnames(tdm$tblMostFreqMelt) <- c("Term", "Document", "Occurrence")
+
+# Plot most frequent terms
+tdm$plot <-
+      ggplot(data = tdm$tblMostFreqMelt, aes(x = reorder(Term, Occurrence),
+                                             y = Occurrence, fill = Document)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = Occurrence), size = 3, position = position_stack(vjust = 0.5)) +
+      coord_flip() +
+      labs(title = "Term-document matrix of US blogs, news and Twitter data", x = "Terms")
+tdm$plot
+
+```
+
+#### Data density
+Now that we know the terms in each document and their frequencies we can compare
+the three sources with a set of density plots that express how often each word
+occurs in each text, as a proportion of the total number of words instances in
+the text. This shows that even the most frequent words only make up less than
+0.01% of the total text.
+
+```{r density}
+
+# Tabulate terms and frequencies in data frame
+tdm$tblAll <- as.data.frame(findMostFreqTerms(tdm$tdm, tdm$tdm$nrow))
+tdm$tblAll$terms <- rownames(tdm$tblAll)
+colnames(tdm$tblAll) <- c("Blogs", "News", "Twitter", "Terms")
+
+# Generate density plots
+tdm$density$plot$blogs <- ggplot(data = tdm$tblAll, aes(x = Blogs/sum(Blogs), y = Terms)) +
+      geom_count(stat = "sum", size = 2, color = "steelblue4", alpha = 0.5) +
+      xlim(0, 0.01) +
+      theme(axis.text.y = element_blank(), axis.title.y = element_blank(),
+            axis.ticks = element_blank())
+tdm$density$plot$news <- ggplot(data = tdm$tblAll, aes(x = News/sum(News), y = Terms)) +
+      geom_count(stat = "sum", size = 2, color = "steelblue4", alpha = 0.5) +
+      xlim(0, 0.01) +
+      theme(axis.text.y = element_blank(), axis.title.y = element_blank(),
+            axis.ticks = element_blank())
+tdm$density$plot$twitter <- ggplot(data = tdm$tblAll, aes(x = Twitter/sum(Twitter), y = Terms)) +
+      geom_count(stat = "sum", size = 2, color = "steelblue4", alpha = 0.5) +
+      xlim(0, 0.01) +
+      theme(axis.text.y = element_blank(), axis.title.y = element_blank(),
+            axis.ticks = element_blank())
+grid.arrange(tdm$density$plot$blogs, tdm$density$plot$news, tdm$density$plot$twitter, ncol = 1)
+
+```
+
+
+#### N-grams
+
+Another way of looking at the data is via tokenization into chunks of two or more words, aka n-grams. Here, we use the RWeka package to find bi-grams and tri-grams. We tabulate and vizualize the output again using ggplot.
+
+```{r bigram_1}
+tdm2 = list()
+
+# set tokenizer options
+tdm2$tknz <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+tdm2$tdm <- TermDocumentMatrix(swift, control = list(tokenize = tdm2$tknz))
+tdm2$tdm <- removeSparseTerms(tdm2$tdm, 0.1)
+
+# Find most frequent terms
+tdm2$mostFreq <- findMostFreqTerms(tdm2$tdm, 30)
+
+# Tabulate most frequent terms
+tdm2$tblMostFreq <- as.data.frame(tdm2$mostFreq)
+tdm2$tblMostFreq$Term <- rownames(tdm2$tblMostFreq)
+tdm2$tblMostFreqMelt <-
+      melt(
+            tdm2$tblMostFreq,
+            id = c("Term"),
+            measure.vars = colnames(tdm2$tblMostFreq[,1:3])
+      )
+colnames(tdm2$tblMostFreqMelt) <- c("Term", "Document", "Occurrence")
+```
+
+```{r bigram_2}
+
+# Plot most frequent terms
+tdm2$plot1 <- ggplot(data = tdm2$tblMostFreqMelt, 
+                     aes(x = reorder(Term, Occurrence), y = Occurrence, fill = Document)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = Occurrence), size = 3, position = position_stack(vjust = 0.5)) +
+      coord_flip() +
+      labs(title = "Bi-gram term-document matrix of US blogs, news and Twitter data", 
+           x = "Terms")
+tdm2$plot1
+
+```
+
+```{r trigram_1}
+
+tdm3 = list()
+
+# set tokenizer options
+tdm3$tknz <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+tdm3$tdm <- TermDocumentMatrix(swift, control = list(tokenize = tdm3$tknz))
+tdm3$tdm <- removeSparseTerms(tdm3$tdm, 0.1)
+
+# Find most frequent terms
+tdm3$mostFreq <- findMostFreqTerms(tdm3$tdm, 30)
+
+# Tabulate most frequent terms
+tdm3$tblMostFreq <- as.data.frame(tdm3$mostFreq)
+tdm3$tblMostFreq$Term <- rownames(tdm3$tblMostFreq)
+tdm3$tblMostFreqMelt <-
+      melt(
+            tdm3$tblMostFreq,
+            id = c("Term"),
+            measure.vars = colnames(tdm3$tblMostFreq[,1:3])
+      )
+colnames(tdm3$tblMostFreqMelt) <- c("Term", "Document", "Occurrence")
+```
+
+```{r trigram_2}
+# Plot most frequent terms
+tdm3$plot1 <- ggplot(data = tdm3$tblMostFreqMelt, 
+                     aes(x = reorder(Term, Occurrence), y = Occurrence, fill = Document)) +
+      geom_bar(stat = "identity") +
+      geom_text(aes(label = Occurrence), size = 3, position = position_stack(vjust = 0.5)) +
+      coord_flip() +
+      labs(title = "Tri-gram term-document matrix of US blogs, news and Twitter data", 
+           x = "Terms")
+tdm3$plot1
+
+```
+
+#### Percent coverage
+
+Next, we will look at percent coverage, meaning: How many unique words found in
+the texts make up a given percentile of all word instances in the corpus?
+
+```{r percent_coverage}
+# How many words cover 50% of the text? How many cover 90%
+
+# Add up row sums
+tdm$tblAll$totalOccur <- rowSums(tdm$tblAll[,1:3])
+# Calculate cumulative sums
+tdm$tblAll$cumTotalOccur <- cumsum(tdm$tblAll$totalOccur)
+# Calculate percent of column
+tdm$tblAll$percUnq <- tdm$tblAll$totalOccur / sum(tdm$tblAll$totalOccur)
+# Calculate cumulative percent of column
+tdm$tblAll$cumPercUnq <- cumsum(tdm$tblAll$percUnq)
+
+# Look up how many words, percent of unique words, for each 10 percent of words
+tdm$coverage$percentiles = data.frame()
+for (i in 1:9) {
+      tdm$coverage$percentiles[i, 1] <- 10*i
+      tdm$coverage$percentiles[i, 2] <-
+            which(abs(tdm$tblAll$cumPercUnq - 0.1 * i) == min(abs(tdm$tblAll$cumPercUnq - 0.1 * i)))
+      tdm$coverage$percentiles[i, 3] <- round(100 * (which(
+            abs(tdm$tblAll$cumPercUnq - 0.1 * i) == min(abs(tdm$tblAll$cumPercUnq - 0.1 * i))
+            ) / length(tdm$tblAll$totalOccur)), 2)
+} 
+rm(i)
+colnames(tdm$coverage$percentiles) <- c("percWords", "numWords", "percUnqWords")
+tdm$coverage$percentiles
+```
+
+Given the samples we took, we find that 50% of all words instances in the corpus are covered by `r tdm$coverage$percentiles[5,2]` unique words, which make up `r tdm$coverage$percentiles[5,3]` percent of all unique words. 90% of all words in the corpus are covered by `r tdm$coverage$percentiles[9,2]` unique words, which make up `r tdm$coverage$percentiles[9,3]` percent of all unique words.
+
+
+--------------------------------------------------------------------------------
+
+### Data modeling and word prediction
+
+For data modeling and word prediction, the plan is to use the following
+strategy.
+
+* Generate a Markov transition probability matrix or some other form of
+frequency table for unigrams, bigrams and trigrams found in the text files 
+* To predict the next word given a sentence, we'll select the last 2 words, and
+from the matrix or tables get whatever next word has the highest frequency
+observed
+* In case there is no match at a trigram level, we fall back on bigrams; if
+there also no match at bigram level, then we return the most probable unigram
+(which is 'the')
+
+Some considerations to be made when building the model are: 
+
+* What is the most efficient way to build and store the training set?
+* What is the best balance between model accuracy and model performance? For 
+example, how many sparse terms can we remove in order to retain accuracy while
+improving model performance? Similarly, adding quad-grams to the matrix may
+yield better accuracy in some cases, but is also computationally more expensive.
+* How do we evaluate the predictive performance of the model?
+
+--------------------------------------------------------------------------------
+
