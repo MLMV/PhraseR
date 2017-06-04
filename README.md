@@ -10,7 +10,7 @@ This repo has all the files used for the Coursera Johns Hopkins University Data 
 - Shiny app: https://mlmv.shinyapps.io/phraser/
 
 #### Files in this repo are organized as follows:
-- app folder: all files used to produce the Shiny app, including ui.R, server.R, scripts containing word prediction functions with and without smoothing. This folder can be used standalone and should run the app on any PC (at least on Windows 10 with R version 3.4)
+- app folder: all files used to produce the Shiny app, including global.R, ui.R, server.R, scripts containing word prediction functions with and without smoothing. This folder can be used standalone and should run the app on any PC (at least on Windows 10 with R version 3.4). Nb. global.R is used to load the files from the files folder into memory prior to ui.R displaying the interface.
   - files folder: .rds files used to read in n-gram MLE and GT probabilities
   - scripts: word prediction scripts for n-gram MLE and GT probabilities
   - www: for the image used in the app
